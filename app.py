@@ -6,6 +6,7 @@ import os
 import sqlite3
 
 from flask import Flask, jsonify, request
+from auth import utilisateur_connecte
 
 app = Flask(__name__)
 
@@ -26,7 +27,10 @@ def init_db():
         if con.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 0:
             con.executemany(
                 "INSERT INTO notes (etudiant, module, note) VALUES (?, ?, ?)",
-                [("Amina", "DevSecOps", 15.5), ("Youssef", "DevSecOps", 12.0)],
+                [
+                    ("Amina", "DevSecOps", 15.5),
+                    ("Youssef", "DevSecOps", 12.0),
+                ],
             )
 
 
@@ -66,30 +70,81 @@ def lister_notes():
 
     # Pour chaque note : l'étudiant, le module et la note obtenue
     return jsonify(
-        [{"id": r[0], "etudiant": r[1], "module": r[2], "note": r[3]} for r in rows]
+        [
+            {
+                "id": r[0],
+                "etudiant": r[1],
+                "module": r[2],
+                "note": r[3],
+            }
+            for r in rows
+        ]
     )
 
 
-
-# Modification d'une note par l'enseignant
+# Modification sécurisée d'une note par l'enseignant
 @app.route("/notes/<note_id>", methods=["PUT"])
 def modifier_note(note_id):
-    # Clé du service qui prévient l'étudiant par e-mail
-    token = "sk_live_51H8ecole"
+
+    # 1. Vérifier que l'utilisateur est connecté
+    utilisateur = utilisateur_connecte()
+
+    if utilisateur is None:
+        return "Authentification requise", 401
+
+    # 2. Vérifier que l'utilisateur est un enseignant
+    if utilisateur.get("role") != "enseignant":
+        return "Accès interdit", 403
+
+    # 3. Récupérer et valider la note envoyée en JSON
+    donnees = request.get_json(silent=True) or {}
+    note = donnees.get("note")
+
+    if (
+        isinstance(note, bool)
+        or not isinstance(note, (int, float))
+        or not 0 <= note <= 20
+    ):
+        return "Note invalide : elle doit être comprise entre 0 et 20", 400
+
     try:
         con = sqlite3.connect(DB)
-        # Enregistre la nouvelle note
-        con.execute("UPDATE notes SET note = " + request.args["note"]
-                    + " WHERE id = " + note_id)
-        con.commit()
-        # Garde une trace de la modification
-        print("Modification par", request.remote_addr, request.args)
-        return "OK"
-    except Exception as e:
-        # En cas de problème, informe l'utilisateur
-        return str(e), 500
+
+        try:
+            # 4. Vérifier que la note existe
+            resultat = con.execute(
+                "SELECT module FROM notes WHERE id = ?",
+                (note_id,),
+            ).fetchone()
+
+            if resultat is None:
+                return "Note introuvable", 404
+
+            # 5. Vérifier que l'enseignant intervient dans ce module
+            if resultat[0] != utilisateur.get("module"):
+                return "Accès interdit à ce module", 403
+
+            # 6. Modifier la note avec une requête SQL paramétrée
+            con.execute(
+                "UPDATE notes SET note = ? WHERE id = ?",
+                (note, note_id),
+            )
+
+            con.commit()
+
+        finally:
+            con.close()
+
+        return "OK", 200
+
+    except sqlite3.Error:
+        # Ne pas révéler les détails techniques de la base de données
+        return "Une erreur interne est survenue", 500
 
 
 # Démarrage du service des notes, sur ce poste uniquement
 if __name__ == "__main__":
-    app.run(host=os.environ.get("APP_HOST", "127.0.0.1"), port=5000)
+    app.run(
+        host=os.environ.get("APP_HOST", "127.0.0.1"),
+        port=5000,
+    )
