@@ -3,7 +3,7 @@
 # ============================================================
 
 import json
-import pytest 
+import pytest
 
 import app as application
 import auth
