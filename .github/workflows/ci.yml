@@ -1,0 +1,40 @@
+# Pipeline d'intégration continue de l'application des notes
+name: CI
+
+# Quand le pipeline se lance
+on:
+  # À chaque modification envoyée sur main
+  push:
+    branches: [main]
+
+  # À chaque pull request
+  pull_request:
+    branches: [main]
+
+  # Déclenchement manuel
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v7
+
+      - name: Installer Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt pytest flake8 bandit
+
+      - name: Vérifier le style
+        run: flake8 --max-line-length=100 *.py
+
+      - name: Analyser la sécurité du code
+        run: bandit app.py auth.py
+
+      - name: Lancer les tests
+        run: pytest -v
